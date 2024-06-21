@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Blockcore.Indexer.Core.Models;
@@ -44,9 +43,11 @@ namespace Blockcore.Indexer.Core.Storage
 
       ReorgBlockTable OrphanBlockByHash(string blockHash);
 
-      QueryResult<BalanceForAddress> Richlist(int offset, int limit);
+      QueryResult<RichlistTable> Richlist(int offset, int limit);
 
-      List<BalanceForAddress> AddressBalances(IEnumerable<string> addresses);
+      RichlistTable RichlistBalance(string address);
+
+      List<RichlistTable> AddressBalances(IEnumerable<string> addresses);
 
       long TotalBalance();
 
@@ -57,12 +58,5 @@ namespace Blockcore.Indexer.Core.Storage
       public List<IndexView> GetIndexesBuildProgress();
 
       public List<string> GetBlockIndexIndexes();
-
-      public List<string> GetMempoolTransactionIds();
-
-      public bool DeleteTransactionsFromMempool(List<string> transactionIds);
-
-      List<PeerDetails> GetPeerFromDate(DateTime date);
-      Task<long> InsertPeer(PeerDetails info);
    }
 }

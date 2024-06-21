@@ -1,6 +1,5 @@
 using Blockcore.Indexer.Core.Client.Types;
 using Blockcore.Indexer.Core.Storage.Mongo.Types;
-using Blockcore.Indexer.Core.Storage.Types;
 using MongoDB.Driver;
 
 namespace Blockcore.Indexer.Core.Storage.Mongo;
@@ -16,7 +15,7 @@ public interface IMongoDb
    IMongoCollection<TransactionTable> TransactionTable { get; }
    IMongoCollection<BlockTable> BlockTable { get; }
    IMongoCollection<RichlistTable> RichlistTable { get; }
-   IMongoCollection<PeerDetails> Peer { get; }
+   IMongoCollection<PeerInfo> Peer { get; }
    IMongoCollection<MempoolTable> Mempool { get; }
    IMongoCollection<ReorgBlockTable> ReorgBlock { get; }
 }

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Blockcore.Consensus.BlockInfo;
 using Blockcore.Consensus.ScriptInfo;
 using Blockcore.Consensus.TransactionInfo;
 using Blockcore.Indexer.Core.Client;
@@ -9,10 +10,13 @@ using Blockcore.Indexer.Core.Operations;
 using Blockcore.Indexer.Core.Operations.Types;
 using Blockcore.Indexer.Core.Settings;
 using Blockcore.Indexer.Core.Storage;
+using Blockcore.Indexer.Core.Storage.Mongo;
+using Blockcore.Indexer.Core.Storage.Mongo.Types;
 using Blockcore.Indexer.Core.Storage.Types;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MongoDB.Driver;
 
 namespace Blockcore.Indexer.Core.Sync
 {
@@ -22,6 +26,7 @@ namespace Blockcore.Indexer.Core.Sync
    public class SyncOperations : ISyncOperations
    {
       private readonly IStorage storage;
+      private readonly IMongoDb db;
 
       private readonly ILogger<SyncOperations> log;
 
@@ -45,7 +50,7 @@ namespace Blockcore.Indexer.Core.Sync
          IOptions<IndexerSettings> configuration,
          IMemoryCache cache,
          GlobalState globalState, ICryptoClientFactory clientFactory,
-         ISyncBlockTransactionOperationBuilder blockInfoEnrichment)
+         ISyncBlockTransactionOperationBuilder blockInfoEnrichment, IMongoDb db)
       {
          this.configuration = configuration.Value;
          log = logger;
@@ -54,6 +59,7 @@ namespace Blockcore.Indexer.Core.Sync
          this.globalState = globalState;
          this.clientFactory = clientFactory;
          transactionOperationBuilder = blockInfoEnrichment;
+         this.db = db;
 
          // Register the cold staking template.
          StandardScripts.RegisterStandardScriptTemplate(ColdStakingScriptTemplate.Instance);
@@ -63,11 +69,11 @@ namespace Blockcore.Indexer.Core.Sync
 
       public void InitializeMmpool()
       {
-         var mempoolTransactionIds = storage.GetMempoolTransactionIds();
+         var allitems = db.Mempool.AsQueryable().ToList();
 
-         foreach (var transactionId in mempoolTransactionIds)
+         foreach (MempoolTable allitem in allitems)
          {
-            globalState.LocalMempoolView.TryAdd(transactionId, string.Empty);
+            globalState.LocalMempoolView.TryAdd(allitem.TransactionId, string.Empty);
          }
       }
 
@@ -163,7 +169,10 @@ namespace Blockcore.Indexer.Core.Sync
          {
             List<string> toRemoveFromMempool = deleteTransaction;
 
-            storage.DeleteTransactionsFromMempool(toRemoveFromMempool);
+            FilterDefinitionBuilder<MempoolTable> builder = Builders<MempoolTable>.Filter;
+            FilterDefinition<MempoolTable> filter = builder.In(mempoolItem => mempoolItem.TransactionId, toRemoveFromMempool);
+
+            db.Mempool.DeleteMany(filter);
 
             foreach (string mempooltrx in toRemoveFromMempool)
                globalState.LocalMempoolView.Remove(mempooltrx, out _);
@@ -227,7 +236,7 @@ namespace Blockcore.Indexer.Core.Sync
 
          string hex = client.GetBlockHex(block.Hash);
 
-         var blockItem = Consensus.BlockInfo.Block.Parse(hex, connection.Network.Consensus.ConsensusFactory);
+         var blockItem = Block.Parse(hex, connection.Network.Consensus.ConsensusFactory);
 
          foreach (Transaction blockItemTransaction in blockItem.Transactions)
          {

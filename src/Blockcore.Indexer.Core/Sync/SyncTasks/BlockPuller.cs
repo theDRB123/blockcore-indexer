@@ -9,7 +9,6 @@ using Blockcore.Indexer.Core.Extensions;
 using Blockcore.Indexer.Core.Operations;
 using Blockcore.Indexer.Core.Operations.Types;
 using Blockcore.Indexer.Core.Settings;
-using Blockcore.Indexer.Core.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -36,8 +35,6 @@ namespace Blockcore.Indexer.Core.Sync.SyncTasks
 
       readonly ICryptoClientFactory clientFactory;
 
-      readonly IStorageBatchFactory StorageBatchFactory;
-
       private readonly IEnumerable<long> bip30Blocks = new List<long> {91842 , 91880 };
 
       private readonly BlockingCollection<SyncBlockTransactionsOperation> pendingBlocksToAddToStorage = new();
@@ -55,14 +52,12 @@ namespace Blockcore.Indexer.Core.Sync.SyncTasks
          SyncConnection syncConnection,
          ILogger<BlockPuller> logger,
          IStorageOperations storageOperations,
-         ICryptoClientFactory clientFactory,
-         IStorageBatchFactory storageBatchFactory)
+         ICryptoClientFactory clientFactory)
           : base(configuration, logger)
       {
          log = logger;
          this.storageOperations = storageOperations;
          this.clientFactory = clientFactory;
-         StorageBatchFactory = storageBatchFactory;
          this.syncConnection = syncConnection;
          this.syncOperations = syncOperations;
          config = configuration.Value;
@@ -113,7 +108,7 @@ namespace Blockcore.Indexer.Core.Sync.SyncTasks
          {
             // start pulling blocks form this tip
             Runner.GlobalState.PullingTip = await clientFactory.Create(syncConnection).GetBlockAsync(Runner.GlobalState.StoreTip.BlockHash);
-            currentStorageBatch = StorageBatchFactory.GetStorageBatch();
+            currentStorageBatch = new StorageBatch();
 
             log.LogInformation($"Fetching block started at block {Runner.GlobalState.PullingTip.Height}({Runner.GlobalState.PullingTip.Hash})");
          }
@@ -216,21 +211,21 @@ namespace Blockcore.Indexer.Core.Sync.SyncTasks
             bool bip30Issue = bip30Blocks.Contains(block.BlockInfo.Height + 1);
 
             if (ibd && !bip30Issue &&
-                currentStorageBatch.GetBlockCount() < config.DbBatchCount &&
-                currentStorageBatch.GetBatchSize() <= config.DbBatchSize)
+                currentStorageBatch.BlockTable.Count < config.MongoBatchCount &&
+                currentStorageBatch.TotalSize <= config.MongoBatchSize)
             {
                continue;
             }
 
-            long totalBlocks = currentStorageBatch.GetBlockCount();
+            long totalBlocks = currentStorageBatch.BlockTable.Count;
             double totalSeconds = watchBatch.Elapsed.TotalSeconds;
             double blocksPerSecond = totalBlocks / totalSeconds;
             double secondsPerBlock = totalSeconds / totalBlocks;
 
-            log.LogInformation($"Puller - blocks={currentStorageBatch.GetBlockCount()}, height = {block.BlockInfo.Height}, batch size = {((decimal)currentStorageBatch.GetBatchSize() / 1000000):0.00}mb, Seconds = {watchBatch.Elapsed.TotalSeconds}, fetchs = {blocksPerSecond:0.00}b/s ({secondsPerBlock:0.00}s/b). ({pendingBlocksToAddToStorage.Count})");
+            log.LogInformation($"Puller - blocks={currentStorageBatch.BlockTable.Count}, height = {block.BlockInfo.Height}, batch size = {((decimal)currentStorageBatch.TotalSize / 1000000):0.00}mb, Seconds = {watchBatch.Elapsed.TotalSeconds}, fetchs = {blocksPerSecond:0.00}b/s ({secondsPerBlock:0.00}s/b). ({pendingBlocksToAddToStorage.Count})");
 
             Runner.Get<BlockStore>().Enqueue(currentStorageBatch);
-            currentStorageBatch = StorageBatchFactory.GetStorageBatch();
+            currentStorageBatch = new StorageBatch();
 
             watchBatch.Restart();
          }

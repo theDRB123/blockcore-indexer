@@ -7,6 +7,7 @@ using Blockcore.Indexer.Core.Operations;
 using Blockcore.Indexer.Core.Operations.Types;
 using Blockcore.Indexer.Core.Settings;
 using Blockcore.Indexer.Core.Storage;
+using Blockcore.Indexer.Core.Storage.Mongo;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -24,9 +25,8 @@ namespace Blockcore.Indexer.Core.Sync.SyncTasks
       private readonly SyncConnection connection;
       private readonly IStorageOperations storageOperations;
       readonly ICryptoClientFactory clientFactory;
-      private readonly IStorage storageData;
+      private readonly MongoData mongoData;
       readonly IOptions<IndexerSettings> indexerSettings;
-      readonly IStorageBatchFactory StorageBatchFactory;
 
       /// <summary>
       /// Initializes a new instance of the <see cref="BlockStartup"/> class.
@@ -38,19 +38,17 @@ namespace Blockcore.Indexer.Core.Sync.SyncTasks
          IStorageOperations storageOperations,
          ICryptoClientFactory clientFactory,
          IStorage data,
-         IOptions<IndexerSettings> indexerSettings,
-         IStorageBatchFactory storageBatchFactory)
+         IOptions<IndexerSettings> indexerSettings)
           : base(logger)
       {
          connection = syncConnection;
          this.storageOperations = storageOperations;
          this.clientFactory = clientFactory;
          this.indexerSettings = indexerSettings;
-         StorageBatchFactory = storageBatchFactory;
          this.syncOperations = syncOperations;
          log = logger;
 
-         storageData = data;
+         mongoData = (MongoData)data;
 
       }
 
@@ -69,7 +67,7 @@ namespace Blockcore.Indexer.Core.Sync.SyncTasks
       {
          IBlockchainClient client = clientFactory.Create(connection);
 
-         List<string> allIndexes = storageData.GetBlockIndexIndexes();
+         List<string> allIndexes = mongoData.GetBlockIndexIndexes();
 
          if (allIndexes.Count == indexerSettings.Value.IndexCountForBlockIndexProperty)
          {
@@ -94,7 +92,7 @@ namespace Blockcore.Indexer.Core.Sync.SyncTasks
             BlockInfo genesisBlock = await client.GetBlockAsync(genesisHash);
             SyncBlockTransactionsOperation block = syncOperations.FetchFullBlock(connection, genesisBlock);
 
-            StorageBatch genesisBatch = StorageBatchFactory.GetStorageBatch();
+            StorageBatch genesisBatch = new StorageBatch();
             storageOperations.AddToStorageBatch(genesisBatch, block);
             Runner.GlobalState.StoreTip = storageOperations.PushStorageBatch(genesisBatch);
          }

@@ -28,6 +28,7 @@ namespace Blockcore.Indexer.Cirrus.Storage.Mongo
       public CirrusMongoStorageOperations(
          SyncConnection syncConnection,
          IStorage storage,
+         IUtxoCache utxoCache,
          IOptions<IndexerSettings> configuration,
          GlobalState globalState,
          IMapMongoBlockToStorageBlock mongoBlockToStorageBlock,
@@ -37,6 +38,7 @@ namespace Blockcore.Indexer.Cirrus.Storage.Mongo
          base(
              syncConnection,
              db,
+             utxoCache,
              configuration,
              globalState,
              mongoBlockToStorageBlock,
@@ -50,7 +52,12 @@ namespace Blockcore.Indexer.Cirrus.Storage.Mongo
 
       protected override void OnAddToStorageBatch(StorageBatch storageBatch, SyncBlockTransactionsOperation item)
       {
-         CirrusStorageBatch cirrusStorageBatch = storageBatch as CirrusStorageBatch;
+         storageBatch.ExtraData ??= new CirrusStorageBatch();
+
+         if (!(storageBatch.ExtraData is CirrusStorageBatch cirrusStorageBatch))
+         {
+            throw new ArgumentNullException(nameof(cirrusStorageBatch));
+         }
 
          foreach (Transaction transaction in item.Transactions)
          {
@@ -118,7 +125,10 @@ namespace Blockcore.Indexer.Cirrus.Storage.Mongo
 
       protected override void OnPushStorageBatch(StorageBatch storageBatch)
       {
-         CirrusStorageBatch cirrusStorageBatch = storageBatch as CirrusStorageBatch;
+         if (!(storageBatch.ExtraData is CirrusStorageBatch cirrusStorageBatch))
+         {
+            throw new ArgumentNullException(nameof(cirrusStorageBatch));
+         }
 
          var t1 = Task.Run(() =>
          {

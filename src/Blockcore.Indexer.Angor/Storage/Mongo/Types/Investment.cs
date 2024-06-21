@@ -1,4 +1,4 @@
-using Blockcore.Indexer.Core.Storage.Types;
+using Blockcore.Indexer.Core.Storage.Mongo.Types;
 
 namespace Blockcore.Indexer.Angor.Storage.Mongo.Types;
 

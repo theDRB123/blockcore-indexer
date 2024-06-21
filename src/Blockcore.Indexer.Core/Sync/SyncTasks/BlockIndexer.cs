@@ -4,19 +4,23 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Blockcore.Indexer.Core.Extensions;
+using Blockcore.Indexer.Core.Operations;
+using Blockcore.Indexer.Core.Operations.Types;
 using Blockcore.Indexer.Core.Settings;
+using Blockcore.Indexer.Core.Storage;
+using Blockcore.Indexer.Core.Storage.Mongo;
 using Blockcore.Indexer.Core.Storage.Mongo.Types;
-using Blockcore.Indexer.Core.Sync.SyncTasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MongoDB.Bson;
 using MongoDB.Driver;
 
-namespace Blockcore.Indexer.Core.Storage.Mongo.SyncTasks
+namespace Blockcore.Indexer.Core.Sync.SyncTasks
 {
-   public class MongoDbBlockIndexer : TaskRunner
+   public class BlockIndexer : TaskRunner
    {
       private readonly IndexerSettings config;
-      private readonly ILogger<MongoDbBlockIndexer> log;
+      private readonly ILogger<BlockIndexer> log;
       readonly IStorage data;
 
       private readonly System.Diagnostics.Stopwatch watch;
@@ -27,9 +31,9 @@ namespace Blockcore.Indexer.Core.Storage.Mongo.SyncTasks
       Task indexingCompletTask;
       bool initialized;
 
-      public MongoDbBlockIndexer(
+      public BlockIndexer(
          IOptions<IndexerSettings> configuration,
-         ILogger<MongoDbBlockIndexer> logger,
+         ILogger<BlockIndexer> logger,
          IStorage data, IMongoDb db)
           : base(configuration, logger)
       {
