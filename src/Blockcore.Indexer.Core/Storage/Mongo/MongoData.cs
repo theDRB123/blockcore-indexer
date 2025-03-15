@@ -793,7 +793,10 @@ namespace Blockcore.Indexer.Core.Storage.Mongo
          var tasks = await Task.WhenAll(transactions.Select(async (transaction, index) =>
          {
             var blk = blks[index];
-            var outputsTasks = transactionItemsList[index].Inputs.Select(async input => await GetTransactionOutputAsync(input.PreviousTransactionHash, input.PreviousIndex));
+            var outputsTasks = transactionItemsList[index].Inputs.Select(async input =>
+               CheckCoinbaseInput(input)
+                  ? await GetTransactionOutputAsync(input.PreviousTransactionHash, input.PreviousIndex) 
+                  : new OutputTable());
             var outputs = await Task.WhenAll(outputsTasks);
 
             return new MempoolTransaction
@@ -814,10 +817,11 @@ namespace Blockcore.Indexer.Core.Storage.Mongo
                Vin = transactionItemsList[index].Inputs.Select((input, inputIndex) =>
                {
                   OutputTable output = outputs[inputIndex];
+                  var coinbaseCheck = CheckCoinbaseInput(input);
                   return new Vin()
                   {
-                     IsCoinbase = input.InputCoinBase != null,
-                     Prevout = new PrevOut()
+                     IsCoinbase = coinbaseCheck,
+                     Prevout = coinbaseCheck ? null : new PrevOut()
                      {
                         Value = output.Value,
                         Scriptpubkey = output.ScriptHex,
@@ -848,6 +852,10 @@ namespace Blockcore.Indexer.Core.Storage.Mongo
          return tasks.ToList();
       }
 
+      private bool CheckCoinbaseInput(SyncTransactionItemInput input)
+      {
+         return input.PreviousTransactionHash == "0000000000000000000000000000000000000000000000000000000000000000";
+      }
       private long TryParseSequenceLock(string sequenceLock)
       {
          if (long.TryParse(sequenceLock, out long result))
