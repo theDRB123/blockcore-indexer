@@ -766,10 +766,87 @@ namespace Blockcore.Indexer.Core.Storage.Mongo
             Total = total
          };
       }
+      public QueryResult<QueryAddressItem> GetAddressHistory(string address, int limit, int limitMempool, string after_txid = null)
+      {
+         AddressComputedTable addressComputedTable = ComputeAddressBalance(address);
+         var transaction = after_txid != null ? GetTransaction(after_txid) : new()
+         {
+            BlockIndex = 0
+         };
+         if (transaction == null)
+         {
+            return new QueryResult<QueryAddressItem>
+            {
+               Items = Enumerable.Empty<QueryAddressItem>(),
+               Offset = -1,
+               Limit = limit,
+               Total = 0
+            };
+         }
+         IQueryable<AddressHistoryComputedTable> filter = mongoDb.AddressHistoryComputedTable.AsQueryable()
+            .Where(t => t.Address == address);
 
+         SyncBlockInfo storeTip = globalState.StoreTip;
+         if (storeTip == null)
+         {
+            // this can happen if node is in the middle of reorg
+
+            return new QueryResult<QueryAddressItem>
+            {
+               Items = Enumerable.Empty<QueryAddressItem>(),
+               Offset = 0,
+               Limit = limit,
+               Total = 0
+            };
+         }
+         ;
+
+         filter = filter.OrderBy(s => s.BlockIndex);
+         var list = filter.Where(w => w.BlockIndex >= transaction.BlockIndex).Take(limit).ToList();
+
+         // Loop all transaction IDs and get the transaction object.
+         IEnumerable<QueryAddressItem> transactions = list.Select(item => new QueryAddressItem
+         {
+            BlockIndex = item.BlockIndex,
+            Value = item.AmountInOutputs - item.AmountInInputs,
+            EntryType = item.EntryType,
+            TransactionHash = item.TransactionId,
+            Confirmations = storeTip.BlockIndex + 1 - item.BlockIndex
+         });
+
+         IEnumerable<QueryAddressItem> mempoolTransactions = null;
+
+         List<MapMempoolAddressBag> mempoolAddressBag = MempoolBalance(address);
+
+         mempoolTransactions = mempoolAddressBag.Select(item => new QueryAddressItem
+         {
+            TransactionHash = item.Mempool.TransactionId,
+            BlockIndex = 0,
+            Value = item.AmountInOutputs - item.AmountInInputs,
+            EntryType = item.AmountInOutputs > item.AmountInInputs ? "receive" : "send",
+         }).Take(limitMempool);
+
+         List<QueryAddressItem> allTransactions = new();
+         if (mempoolTransactions != null)
+            allTransactions.AddRange(mempoolTransactions);
+
+         allTransactions.AddRange(transactions);
+
+         return new QueryResult<QueryAddressItem>
+         {
+            Items = allTransactions,
+            Offset = -1,
+            Limit = limit,
+            Total = list.Count(),
+         };
+      }
       public async Task<List<MempoolTransaction>> GetMempoolTransactionListAsync(List<string> txids)
       {
          FilterDefinition<TransactionBlockTable> filter = Builders<TransactionBlockTable>.Filter.In(info => info.TransactionId, txids);
+         FilterDefinition<MempoolTable> filter_mempool = Builders<MempoolTable>.Filter.In(t => t.TransactionId, txids);
+         var mempool_trxsCursor = await mongoDb.Mempool.FindAsync(filter_mempool);
+         var mempool_trxs = await mempool_trxsCursor.ToListAsync();
+
          var trxsCursor = await mongoDb.TransactionBlockTable.FindAsync(filter);
          var trxs = await trxsCursor.ToListAsync();
 
@@ -794,8 +871,8 @@ namespace Blockcore.Indexer.Core.Storage.Mongo
          {
             var blk = blks[index];
             var outputsTasks = transactionItemsList[index].Inputs.Select(async input =>
-               CheckCoinbaseInput(input)
-                  ? await GetTransactionOutputAsync(input.PreviousTransactionHash, input.PreviousIndex) 
+               CheckCoinbaseInput(input.PreviousTransactionHash)
+                  ? await GetTransactionOutputAsync(input.PreviousTransactionHash, input.PreviousIndex)
                   : new OutputTable());
             var outputs = await Task.WhenAll(outputsTasks);
 
@@ -817,7 +894,7 @@ namespace Blockcore.Indexer.Core.Storage.Mongo
                Vin = transactionItemsList[index].Inputs.Select((input, inputIndex) =>
                {
                   OutputTable output = outputs[inputIndex];
-                  var coinbaseCheck = CheckCoinbaseInput(input);
+                  var coinbaseCheck = CheckCoinbaseInput(input.PreviousTransactionHash);
                   return new Vin()
                   {
                      IsCoinbase = coinbaseCheck,
@@ -847,14 +924,78 @@ namespace Blockcore.Indexer.Core.Storage.Mongo
                   ScriptpubkeyAsm = null,
                }).ToList(),
             };
+         }));
+         var transactionList = tasks.ToList();
+         var mempoolList = await MapMempoolTableToMempoolTransaction(mempool_trxs);
+         transactionList.AddRange(mempoolList);
+         return transactionList;
+      }
+      private async Task<List<MempoolTransaction>> MapMempoolTableToMempoolTransaction(List<MempoolTable> transactions)
+      {
+         var tasks = await Task.WhenAll(transactions.Select(async (transaction, index) =>
+         {
+            var outputsTasks = transaction.Inputs.Select(async input =>
+               CheckCoinbaseInput(input.Outpoint.TransactionId)
+                  ? await GetTransactionOutputAsync(input.Outpoint.TransactionId, input.Outpoint.OutputIndex)
+                  : new OutputTable());
+            var outputs = await Task.WhenAll(outputsTasks);
+            // The unavailable fields are set to -1 temporarily
+            return new MempoolTransaction
+            {
+               Txid = transaction.TransactionId,
+               Version = -1,
+               Locktime = -1,
+               Size = -1,
+               Weight = -1,
+               Fee = -1,
+               Status = new()
+               {
+                  Confirmed = false,
+                  BlockHeight = -1,
+                  BlockHash = null,
+                  BlockTime = -1,
+               },
+               Vin = transaction.Inputs.Select((input, inputIndex) =>
+               {
+                  OutputTable output = outputs[inputIndex];
+                  var coinbaseCheck = CheckCoinbaseInput(input.Outpoint.TransactionId);
+                  return new Vin()
+                  {
+                     IsCoinbase = coinbaseCheck,
+                     Prevout = coinbaseCheck ? null : new PrevOut()
+                     {
+                        Value = output.Value,
+                        Scriptpubkey = output.ScriptHex,
+                        ScriptpubkeyAddress = output.Address,
+                        ScriptpubkeyAsm = null,
+                        ScriptpubkeyType = null
+                     },
+                     Scriptsig = null,
+                     Asm = null,
+                     Sequence = -1,
+                     Txid = input.Outpoint.TransactionId,
+                     Vout = input.Outpoint.OutputIndex,
+                     Witness = null,
+                     InnserRedeemscriptAsm = null,
+                     InnerWitnessscriptAsm = null
+                  };
+               }).ToList(),
+               Vout = transaction.Outputs.Select(output => new PrevOut()
+               {
+                  Value = output.Value,
+                  Scriptpubkey = output.ScriptHex,
+                  ScriptpubkeyAddress = output.Address,
+                  ScriptpubkeyAsm = null,
+               }).ToList(),
+            };
          }
          ));
          return tasks.ToList();
       }
 
-      private bool CheckCoinbaseInput(SyncTransactionItemInput input)
+      private bool CheckCoinbaseInput(string inputPrevHash)
       {
-         return input.PreviousTransactionHash == "0000000000000000000000000000000000000000000000000000000000000000";
+         return inputPrevHash == "0000000000000000000000000000000000000000000000000000000000000000";
       }
       private long TryParseSequenceLock(string sequenceLock)
       {

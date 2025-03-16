@@ -40,9 +40,9 @@ namespace Blockcore.Indexer.Angor.Controllers
 
         [HttpGet]
         [Route("address/{address}/txs")]
-        public async Task<IActionResult> GetAddressTransactions(string address)
+        public async Task<IActionResult> GetAddressTransactions(string address, string? after_txid = null)
         {
-            var transactions = storage.AddressHistory(address, null, 50).Items.Select(t => t.TransactionHash).ToList();
+            List<string> transactions = storage.GetAddressHistory(address,25, 50, after_txid).Items.Select(t => t.TransactionHash).ToList();
             List<MempoolTransaction> txns = await storage.GetMempoolTransactionListAsync(transactions);
             return Ok(JsonSerializer.Serialize(txns, serializeOption));
         }
